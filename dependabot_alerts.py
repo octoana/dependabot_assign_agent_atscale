@@ -7,6 +7,25 @@ import time
 import requests
 
 try:
+    import keyring
+except ImportError:
+    keyring = None
+
+
+KEYCHAIN_SERVICE = "github-pat"
+KEYCHAIN_ACCOUNT = os.environ.get("USER", "")
+
+
+def _get_token_from_keychain(service: str = KEYCHAIN_SERVICE, account: str = KEYCHAIN_ACCOUNT) -> str | None:
+    """Retrieve a secret from the macOS Keychain (or OS-native credential store)."""
+    if keyring is None:
+        return None
+    try:
+        return keyring.get_password(service, account) or None
+    except Exception:
+        return None
+
+try:
     import jwt  # PyJWT
 except ImportError:
     jwt = None
@@ -214,8 +233,20 @@ def main():
     )
     parser.add_argument(
         "--token",
-        default=os.environ.get("GITHUB_TOKEN"),
-        help="GitHub personal access token (defaults to GITHUB_TOKEN env var)",
+        default=None,
+        help="GitHub personal access token (default: read from OS keychain)",
+    )
+    parser.add_argument(
+        "--keychain-service",
+        default=KEYCHAIN_SERVICE,
+        metavar="SERVICE",
+        help=f"Keychain service name for the PAT (default: {KEYCHAIN_SERVICE})",
+    )
+    parser.add_argument(
+        "--keychain-account",
+        default=KEYCHAIN_ACCOUNT,
+        metavar="ACCOUNT",
+        help=f"Keychain account name for the PAT (default: $USER = {KEYCHAIN_ACCOUNT!r})",
     )
     parser.add_argument(
         "--app-id",
@@ -230,10 +261,19 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve PAT: explicit flag > OS keychain
+    if not args.token:
+        args.token = _get_token_from_keychain(args.keychain_service, args.keychain_account)
+        if args.token:
+            print(f"Token source : macOS Keychain ({args.keychain_service}/{args.keychain_account})")
+
     if not args.token:
         print(
             "Error: a GitHub token is required.\n"
-            "Set the GITHUB_TOKEN environment variable or pass --token <token>.",
+            f"Store it in the OS keychain with:\n"
+            f"  security add-generic-password -s {args.keychain_service} "
+            f"-a {args.keychain_account} -w <your-PAT>\n"
+            "Or pass --token <token> explicitly.",
             file=sys.stderr,
         )
         sys.exit(1)
